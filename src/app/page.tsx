@@ -1149,6 +1149,15 @@ export default function HomePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
+  const user = session?.user as any;
+  const isVendor = user?.role === 'VENDOR';
+
+  useEffect(() => {
+    if (status === 'authenticated' && isVendor) {
+      router.replace('/vendor/queue');
+    }
+  }, [status, isVendor, router]);
+
   // 1. Session is still resolving
   if (status === 'loading') {
     return <SplashScreen stage="loading" message="Loading Enjipuli..." />;
@@ -1160,9 +1169,7 @@ export default function HomePage() {
   }
 
   // 3. Vendor session redirects straight to vendor queue
-  const user = session?.user as any;
-  if (user?.role === 'VENDOR') {
-    router.replace('/vendor/queue');
+  if (isVendor) {
     return <SplashScreen stage="loading" message="Opening Vendor Dashboard..." />;
   }
 

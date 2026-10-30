@@ -37,7 +37,7 @@ export default function StudentLoginPage() {
     // Basic email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
-      setError('Please enter a valid email address (e.g. name@gmail.com or student@providence.edu.in).');
+      setError('Please enter a valid email address.');
       return;
     }
 
@@ -218,20 +218,20 @@ export default function StudentLoginPage() {
         {step === 1 ? (
           <form onSubmit={handleRequestOtp} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div>
+              <label htmlFor="login-email" className="block text-xs font-semibold text-ej-muted text-left mb-1.5 pl-1">
+                Email
+              </label>
               <input
                 id="login-email"
                 type="email"
                 required
                 className="input-field w-full"
-                placeholder="your.email@gmail.com or student@providence.edu.in"
+                placeholder="you@example.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 autoComplete="email"
                 style={{ textAlign: 'center', fontSize: '0.95rem' }}
               />
-              <p style={{ color: 'var(--ej-muted)', fontSize: '0.7rem', marginTop: '0.4rem', textAlign: 'center' }}>
-                ✨ All valid emails and @providence.edu.in accounts accepted
-              </p>
             </div>
             <button
               id="login-submit"

@@ -2,18 +2,71 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { Resend } from 'resend';
 import bcrypt from 'bcryptjs';
+import { validateStudentEmail } from '@/lib/collegeEmail';
 
 const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
-
-import { validateStudentEmail } from '@/lib/collegeEmail';
 
 const VENDOR_ALLOWLIST = [
   'vendor@enjipuli.com',
   ...(process.env.VENDOR_EMAILS?.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean) || []),
 ];
 
+// In-memory sliding window IP rate limiter (max 10 requests per 15 minutes per IP)
+const ipRequestWindowMap = new Map<string, number[]>();
+
+function checkIpRateLimit(ip: string, maxRequests = 10, windowMs = 15 * 60 * 1000): boolean {
+  const now = Date.now();
+  const windowStart = now - windowMs;
+  const timestamps = (ipRequestWindowMap.get(ip) || []).filter((t) => t > windowStart);
+
+  if (timestamps.length >= maxRequests) {
+    ipRequestWindowMap.set(ip, timestamps);
+    return false;
+  }
+
+  timestamps.push(now);
+  ipRequestWindowMap.set(ip, timestamps);
+
+  // Periodic cleanup if map grows
+  if (ipRequestWindowMap.size > 10000) {
+    for (const [key, times] of ipRequestWindowMap.entries()) {
+      const active = times.filter((t) => t > windowStart);
+      if (active.length === 0) {
+        ipRequestWindowMap.delete(key);
+      } else {
+        ipRequestWindowMap.set(key, active);
+      }
+    }
+  }
+
+  return true;
+}
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers.get('x-forwarded-for');
+  if (forwarded) {
+    const first = forwarded.split(',')[0].trim();
+    if (first) return first;
+  }
+  const realIp = req.headers.get('x-real-ip');
+  if (realIp && realIp.trim()) return realIp.trim();
+  const cfIp = req.headers.get('cf-connecting-ip');
+  if (cfIp && cfIp.trim()) return cfIp.trim();
+  return '127.0.0.1';
+}
+
 export async function POST(req: Request) {
   try {
+    const clientIp = getClientIp(req);
+
+    // 1. Per-IP Rate Limiting (max 10 requests per 15 minutes across any emails)
+    if (!checkIpRateLimit(clientIp)) {
+      return NextResponse.json(
+        { error: 'Too many requests from this network. Please try again in 15 minutes.' },
+        { status: 429 }
+      );
+    }
+
     const { email: rawEmail, purpose } = await req.json();
 
     if (!rawEmail || !purpose) {
@@ -22,13 +75,21 @@ export async function POST(req: Request) {
 
     const email = rawEmail.trim().toLowerCase();
 
-    // 1. Strict Validation
+    // 2. Strict Input & Role Validation
     if (purpose === 'student') {
       const validation = validateStudentEmail(email);
       if (!validation.valid) {
         return NextResponse.json(
-          { error: validation.error || 'Only verified college email addresses are permitted.' },
-          { status: 403 }
+          { error: validation.error || 'Please enter a valid email address.' },
+          { status: 400 }
+        );
+      }
+
+      // Safeguard: Vendor accounts cannot use the student portal
+      if (VENDOR_ALLOWLIST.includes(email)) {
+        return NextResponse.json(
+          { error: 'Vendor accounts must sign in through the Vendor Portal.' },
+          { status: 400 }
         );
       }
     } else if (purpose === 'vendor') {
@@ -42,9 +103,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid purpose.' }, { status: 400 });
     }
 
-    // 2. Rate Limiting (max 3 requests per 15 minutes)
-    // Count ALL OTPs for this email in the last 15 min (not just this purpose)
-    // to prevent bypass via alternating purposes.
+    // 3. Per-Email Rate Limiting (max 3 requests per 15 minutes)
+    // Count ALL OTPs for this email in the last 15 min to prevent abuse
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const recentRequests = await prisma.otpCode.count({
       where: {
@@ -60,14 +120,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3. Invalidate old UNCONSUMED OTPs for this email+purpose
+    // 4. Invalidate old UNCONSUMED OTPs for this email+purpose
     // Use updateMany to soft-expire instead of deleteMany, preserving rate-limit history.
     await prisma.otpCode.updateMany({
       where: { email, purpose, consumedAt: null },
       data: { expiresAt: new Date() },  // expire them immediately
     });
 
-    // 4. Generate 6-digit code & Hash
+    // 5. Generate 6-digit code & Hash
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const salt = await bcrypt.genSalt(10);
     const codeHash = await bcrypt.hash(code, salt);
@@ -84,7 +144,7 @@ export async function POST(req: Request) {
       },
     });
 
-    // 5. Send Email
+    // 6. Send Email via Resend
     const hasEmailService = Boolean(
       process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 're_dummy_key'
     );
@@ -98,9 +158,11 @@ export async function POST(req: Request) {
       });
     }
 
+    const fromAddress = process.env.RESEND_FROM_EMAIL || 'ENJIPULI <onboarding@resend.dev>';
+
     try {
       const sendResult = await resend.emails.send({
-        from: 'ENJIPULI <onboarding@resend.dev>', // Or custom domain if configured
+        from: fromAddress,
         to: email,
         subject: 'Your ENJIPULI login code',
         html: `
@@ -116,7 +178,7 @@ export async function POST(req: Request) {
 
       if (sendResult.error) {
         console.warn('Resend email delivery error:', sendResult.error);
-        // Fallback: provide previewCode so user is never locked out due to Resend domain/account restrictions
+        // Fallback: provide previewCode so developer/user is never locked out due to Resend domain/account restrictions
         return NextResponse.json({
           success: true,
           previewCode: code,

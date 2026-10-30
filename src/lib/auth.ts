@@ -31,11 +31,14 @@ export const authOptions: NextAuthOptions = {
         const purpose = credentials.purpose.trim().toLowerCase();
         const requestedRole = purpose === 'vendor' ? 'VENDOR' : 'STUDENT';
 
-        // ── Strict student domain enforcement ────────────────────────────
+        // ── Student email format validation ─────────────────────────────
         if (requestedRole === 'STUDENT') {
           const validation = validateStudentEmail(email);
           if (!validation.valid) {
-            throw new Error(validation.error || 'Only verified college email addresses are permitted.');
+            throw new Error(validation.error || 'Please enter a valid email address.');
+          }
+          if (VENDOR_ALLOWLIST.includes(email)) {
+            throw new Error('Vendor accounts must sign in through the Vendor Portal.');
           }
         }
 

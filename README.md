@@ -99,14 +99,15 @@ See `.env.example` for all required variables.
 | `NEXTAUTH_URL` | Base URL (e.g. `http://localhost:3000`) |
 | `RAZORPAY_KEY_ID` | Razorpay API key (test: `rzp_test_…`) |
 | `RAZORPAY_KEY_SECRET` | Razorpay API secret |
-| `ALLOWED_EMAIL_DOMAIN` | Restrict login to a domain, e.g. `@college.ac.in`. Leave blank to allow any email. |
+| `RESEND_API_KEY` | Resend API key for sending login OTP emails (console fallback when blank) |
+| `RESEND_FROM_EMAIL` | Verified sender address (e.g. `ENJIPULI <login@yourdomain.com>`) |
 
 ---
 
 ## Test Credentials
 
 - **Vendor**: `vendor@enjipuli.com`
-- **Student**: any email (or set `ALLOWED_EMAIL_DOMAIN` to restrict)
+- **Student**: Any valid email address (e.g. `student@gmail.com` or campus email)
 
 ---
 
